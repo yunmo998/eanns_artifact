@@ -876,408 +876,6 @@ int search_memory_index_in_memory(diskann::Metric &metric, diskann::AbstractInde
     return best_recall >= fail_if_recall_below ? 0 : -1;
 }
 
-template <typename T, typename LabelT = uint32_t>
-int search_memory_index_replay(diskann::Metric &metric, const std::string &index_path,
-                               const std::string &result_path_prefix, const std::string &query_file,
-                               const std::string &truthset_file, const uint32_t num_threads, const uint32_t recall_at,
-                               const bool print_all_recalls, const std::vector<uint32_t> &Lvec, const bool dynamic,
-                               const bool tags, const bool show_qps_per_thread,
-                               const std::vector<std::string> &query_filters, const float fail_if_recall_below,
-                               const uint32_t num_queries, diskann::UpdatedNodesInfo &updated_nodes_info,
-                               std::vector<diskann::ReplayTrace> &traces)
-{
-    using TagT = uint32_t;
-    // Load the query file
-    T *query = nullptr;
-    uint32_t *gt_ids = nullptr;
-    float *gt_dists = nullptr;
-    size_t query_num, query_dim, query_aligned_dim, gt_num, gt_dim;
-    diskann::load_aligned_bin<T>(query_file, query, query_num, query_dim, query_aligned_dim);
-
-    if (num_queries > 0 && num_queries < query_num)
-    {
-        query_num = num_queries;
-    }
-    std::cout << "Evaluating " << query_num << " queries" << std::endl;
-
-    bool calc_recall_flag = false;
-    if (truthset_file != std::string("null") && file_exists(truthset_file))
-    {
-        diskann::load_truthset(truthset_file, gt_ids, gt_dists, gt_num, gt_dim);
-        if (gt_num < query_num)
-        {
-            std::cout << "Error. Ground truth has fewer entries than requested queries" << std::endl;
-            return -1;
-        }
-        if (gt_num != query_num)
-        {
-            std::cout << "Warning. Ground truth has more entries than requested queries" << std::endl;
-        }
-        calc_recall_flag = true;
-    }
-    else
-    {
-        diskann::cout << " Truthset file " << truthset_file << " not found. Not computing recall." << std::endl;
-    }
-
-    bool filtered_search = false;
-    if (!query_filters.empty())
-    {
-        filtered_search = true;
-        if (query_filters.size() != 1 && query_filters.size() < query_num)
-        {
-            std::cout << "Error. Mismatch in number of queries and size of query "
-                         "filters file"
-                      << std::endl;
-            return -1; // To return -1 or some other error handling?
-        }
-    }
-
-    const size_t num_frozen_pts = diskann::get_graph_num_frozen_points(index_path);
-
-    auto config = diskann::IndexConfigBuilder()
-                      .with_metric(metric)
-                      .with_dimension(query_dim)
-                      .with_max_points(0)
-                      .with_data_load_store_strategy(diskann::DataStoreStrategy::MEMORY)
-                      .with_graph_load_store_strategy(diskann::GraphStoreStrategy::MEMORY)
-                      .with_data_type(diskann_type_to_name<T>())
-                      .with_label_type(diskann_type_to_name<LabelT>())
-                      .with_tag_type(diskann_type_to_name<TagT>())
-                      .is_dynamic_index(dynamic)
-                      .is_enable_tags(tags)
-                      .is_concurrent_consolidate(false)
-                      .is_pq_dist_build(false)
-                      .is_use_opq(false)
-                      .with_num_pq_chunks(0)
-                      .with_num_frozen_pts(num_frozen_pts)
-                      .build();
-
-    auto index_factory = diskann::IndexFactory(config);
-    auto index = index_factory.create_instance();
-    index->load(index_path.c_str(), num_threads, *(std::max_element(Lvec.begin(), Lvec.end())));
-
-    if (metric == diskann::FAST_L2)
-        index->optimize_index_layout();
-
-    std::cout << "Using " << num_threads << " threads to search" << std::endl;
-    std::cout.setf(std::ios_base::fixed, std::ios_base::floatfield);
-    std::cout.precision(2);
-    const std::string qps_title = show_qps_per_thread ? "QPS/thread" : "QPS";
-    uint32_t table_width = 0;
-    if (tags)
-    {
-        std::cout << std::setw(4) << "Ls" << std::setw(12) << qps_title << std::setw(20) << "Mean Latency (mus)"
-                  << std::setw(15) << "99.9 Latency";
-        table_width += 4 + 12 + 20 + 15;
-    }
-    else
-    {
-        std::cout << std::setw(4) << "Ls" << std::setw(12) << qps_title << std::setw(18) << "Avg dist cmps"
-                  << std::setw(20) << "Mean Latency (mus)" << std::setw(15) << "99.9 Latency";
-        table_width += 4 + 12 + 18 + 20 + 15;
-    }
-    uint32_t recalls_to_print = 0;
-    const uint32_t first_recall = print_all_recalls ? 1 : recall_at;
-    if (calc_recall_flag)
-    {
-        for (uint32_t curr_recall = first_recall; curr_recall <= recall_at; curr_recall++)
-        {
-            std::cout << std::setw(12) << ("Recall@" + std::to_string(curr_recall));
-        }
-        recalls_to_print = recall_at + 1 - first_recall;
-        table_width += recalls_to_print * 12;
-    }
-    std::cout << std::endl;
-    std::cout << std::string(table_width, '=') << std::endl;
-
-    std::vector<std::vector<uint32_t>> query_result_ids(Lvec.size());
-    std::vector<std::vector<float>> query_result_dists(Lvec.size());
-    std::vector<float> latency_stats(query_num, 0);
-    std::vector<uint32_t> cmp_stats;
-    if (not tags || filtered_search)
-    {
-        cmp_stats = std::vector<uint32_t>(query_num, 0);
-    }
-
-    std::vector<TagT> query_result_tags;
-    if (tags)
-    {
-        query_result_tags.resize(recall_at * query_num);
-    }
-
-    double best_recall = 0.0;
-
-    IPCMeasurer measurer;
-    
-    for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++)
-    {
-        uint32_t L = Lvec[test_id];
-        if (L < recall_at)
-        {
-            diskann::cout << "Ignoring search with L:" << L << " since it's smaller than K:" << recall_at << std::endl;
-            continue;
-        }
-
-        query_result_ids[test_id].resize(recall_at * query_num);
-        query_result_dists[test_id].resize(recall_at * query_num);
-        std::vector<T *> res = std::vector<T *>();
-
-        measurer.start();
-        auto s = std::chrono::high_resolution_clock::now();
-        omp_set_num_threads(num_threads);
-
-        // Interleaved scheduling: sort queries by trace weight (visited + expanded),
-        // then even-tid threads pull from heavy end, odd-tid threads pull from light end,
-        // using atomic counters to balance load dynamically across OpenMP threads.
-        std::vector<std::pair<size_t, int64_t>> query_costs(query_num);
-        for (int64_t qi = 0; qi < (int64_t)query_num; qi++)
-        {
-            query_costs[qi] = {traces[qi].visited.size() + traces[qi].expanded.size(), qi};
-        }
-        std::sort(query_costs.begin(), query_costs.end(),
-                  [](const auto &a, const auto &b) { return a.first > b.first; });
-
-        // std::atomic<size_t> heavy_idx{0};
-        // std::atomic<size_t> light_idx{query_num - 1};
-
-        // --- original sequential loop (commented out) ---
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (int64_t i = 0; i < (int64_t)query_num; i++)
-        {
-            int tid = omp_get_thread_num();
-            auto qs = std::chrono::high_resolution_clock::now();
-            if (filtered_search && !tags)
-            {
-                std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[i];
-        
-                auto retval = index->search_with_filters(query + i * query_aligned_dim, raw_filter, recall_at, L,
-                                                         query_result_ids[test_id].data() + i * recall_at,
-                                                         query_result_dists[test_id].data() + i * recall_at);
-                cmp_stats[i] = retval.second;
-            }
-            else if (metric == diskann::FAST_L2)
-            {
-                index->search_with_optimized_layout(query + i * query_aligned_dim, recall_at, L,
-                                                    query_result_ids[test_id].data() + i * recall_at);
-            }
-            else if (tags)
-            {
-                if (!filtered_search)
-                {
-                    index->search_with_tags_replay(
-                        query + i * query_aligned_dim, recall_at, L, query_result_tags.data() + i * recall_at, nullptr,
-                        res, updated_nodes_info, traces[i]);
-                }
-                else
-                {
-                    std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[i];
-        
-                    index->search_with_tags_replay(
-                        query + i * query_aligned_dim, recall_at, L, query_result_tags.data() + i * recall_at, nullptr,
-                        res, updated_nodes_info, traces[i], true, raw_filter);
-                }
-        
-                for (int64_t r = 0; r < (int64_t)recall_at; r++)
-                {
-                    query_result_ids[test_id][recall_at * i + r] = query_result_tags[recall_at * i + r];
-                }
-            }
-            else
-            {
-                cmp_stats[i] = index
-                                   ->search(query + i * query_aligned_dim, recall_at, L,
-                                            query_result_ids[test_id].data() + i * recall_at)
-                                   .second;
-            }
-            auto qe = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<double> diff = qe - qs;
-            latency_stats[i] = (float)(diff.count() * 1000000);
-        }
-
-        // --- tid-based interleaved loop ---
-
-
-        // 假设 query_costs 已经按开销从大到小排序：
-        // query_costs[0] 最重，query_costs[query_num - 1] 最轻
-
-        // std::atomic<int64_t> heavy_cursor{0};
-        // std::atomic<int64_t> light_cursor{static_cast<int64_t>(query_num)}; // 开区间
-
-        // constexpr int64_t BATCH_SIZE = 16; // 批量获取，将 100K 次原子争用降低 16 倍
-
-        // #pragma omp parallel
-        // {
-        //     int tid = omp_get_thread_num();
-        //     // 偶数线程负责 Heavy，奇数线程负责 Light
-        //     bool prefer_heavy = (tid % 2 == 0);
-
-        //     while (true) {
-        //         int64_t start_batch = -1;
-        //         int64_t count = 0;
-
-        //         if (prefer_heavy) {
-        //             // ---------------- 偶数线程：优先拿 Heavy ----------------
-        //             int64_t h = heavy_cursor.fetch_add(BATCH_SIZE, std::memory_order_relaxed);
-        //             int64_t l = light_cursor.load(std::memory_order_relaxed);
-
-        //             if (h < l) {
-        //                 start_batch = h;
-        //                 count = std::min(BATCH_SIZE, l - h);
-        //             } else {
-        //                 // Heavy 已经碰撞耗尽，触发 Work-Stealing：转去拿尾部的 Light
-        //                 int64_t l_steal = light_cursor.fetch_sub(BATCH_SIZE, std::memory_order_relaxed) - BATCH_SIZE;
-        //                 int64_t h_check = heavy_cursor.load(std::memory_order_relaxed);
-        //                 if (l_steal + BATCH_SIZE > h_check) {
-        //                     start_batch = std::max(l_steal, h_check);
-        //                     count = (l_steal + BATCH_SIZE) - start_batch;
-        //                 } else {
-        //                     break; // 两个指针彻底交汇，任务全部完成
-        //                 }
-        //             }
-        //         } else {
-        //             // ---------------- 奇数线程：优先拿 Light ----------------
-        //             int64_t l = light_cursor.fetch_sub(BATCH_SIZE, std::memory_order_relaxed) - BATCH_SIZE;
-        //             int64_t h = heavy_cursor.load(std::memory_order_relaxed);
-
-        //             if (l + BATCH_SIZE > h) {
-        //                 start_batch = std::max(l, h);
-        //                 count = (l + BATCH_SIZE) - start_batch;
-        //             } else {
-        //                 // Light 已经碰撞耗尽，触发 Work-Stealing：转去拿头部的 Heavy
-        //                 int64_t h_steal = heavy_cursor.fetch_add(BATCH_SIZE, std::memory_order_relaxed);
-        //                 int64_t l_check = light_cursor.load(std::memory_order_relaxed);
-        //                 if (h_steal < l_check) {
-        //                     start_batch = h_steal;
-        //                     count = std::min(BATCH_SIZE, l_check - h_steal);
-        //                 } else {
-        //                     break; // 任务彻底完成
-        //                 }
-        //             }
-        //         }
-
-        //         if (count <= 0) break;
-
-        //         // ---------------- 批量执行拿到的一组 Query ----------------
-        //         for (int64_t b = 0; b < count; ++b) {
-        //             int64_t qi = query_costs[start_batch + b].second;
-
-        //             auto qs = std::chrono::high_resolution_clock::now();
-
-        //             if (filtered_search && !tags) {
-        //                 std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[qi];
-        //                 auto retval = index->search_with_filters(query + qi * query_aligned_dim, raw_filter, recall_at, L,
-        //                                                  query_result_ids[test_id].data() + qi * recall_at,
-        //                                                  query_result_dists[test_id].data() + qi * recall_at);
-        //                 cmp_stats[qi] = retval.second;
-        //             } 
-        //             else if (metric == diskann::FAST_L2) {
-        //                 index->search_with_optimized_layout(
-        //                     query + qi * query_aligned_dim, recall_at, L,
-        //                     query_result_ids[test_id].data() + qi * recall_at
-        //                 );
-        //             } 
-        //             else if (tags) {
-        //                 if (!filtered_search) {
-        //                     index->search_with_tags_replay(
-        //                         query + qi * query_aligned_dim, recall_at, L,
-        //                         query_result_tags.data() + qi * recall_at, nullptr, res,
-        //                         updated_nodes_info, traces[qi]
-        //                     );
-        //                 } else {
-        //                     std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[qi];
-        //                     index->search_with_tags_replay(
-        //                         query + qi * query_aligned_dim, recall_at, L,
-        //                         query_result_tags.data() + qi * recall_at, nullptr, res,
-        //                         updated_nodes_info, traces[qi], true, raw_filter
-        //                     );
-        //                 }
-        //                 for (int64_t r = 0; r < (int64_t)recall_at; r++) {
-        //                     query_result_ids[test_id][recall_at * qi + r] = query_result_tags[recall_at * qi + r];
-        //                 }
-        //             } 
-        //             else {
-        //                 cmp_stats[qi] = index->search(
-        //                     query + qi * query_aligned_dim, recall_at, L,
-        //                     query_result_ids[test_id].data() + qi * recall_at
-        //                 ).second;
-        //             }
-
-        //             auto qe = std::chrono::high_resolution_clock::now();
-        //             std::chrono::duration<double> diff = qe - qs;
-        //             latency_stats[qi] = (float)(diff.count() * 1000000);
-        //         }
-        //     }
-        // }
-        
-        std::chrono::duration<double> diff = std::chrono::high_resolution_clock::now() - s;
-
-        measurer.stop_and_print();
-
-        double displayed_qps = query_num / diff.count();
-
-        if (show_qps_per_thread)
-            displayed_qps /= num_threads;
-
-        std::vector<double> recalls;
-        if (calc_recall_flag)
-        {
-            recalls.reserve(recalls_to_print);
-            for (uint32_t curr_recall = first_recall; curr_recall <= recall_at; curr_recall++)
-            {
-                recalls.push_back(diskann::calculate_recall((uint32_t)query_num, gt_ids, gt_dists, (uint32_t)gt_dim,
-                                                            query_result_ids[test_id].data(), recall_at, curr_recall));
-            }
-        }
-
-        std::sort(latency_stats.begin(), latency_stats.end());
-        double mean_latency =
-            std::accumulate(latency_stats.begin(), latency_stats.end(), 0.0) / static_cast<float>(query_num);
-
-        float avg_cmps = (float)std::accumulate(cmp_stats.begin(), cmp_stats.end(), 0) / (float)query_num;
-
-        if (tags && !filtered_search)
-        {
-            std::cout << std::setw(4) << L << std::setw(12) << displayed_qps << std::setw(20) << (float)mean_latency
-                      << std::setw(15) << (float)latency_stats[(uint64_t)(0.999 * query_num)];
-        }
-        else
-        {
-            std::cout << std::setw(4) << L << std::setw(12) << displayed_qps << std::setw(18) << avg_cmps
-                      << std::setw(20) << (float)mean_latency << std::setw(15)
-                      << (float)latency_stats[(uint64_t)(0.999 * query_num)];
-        }
-        for (double recall : recalls)
-        {
-            std::cout << std::setw(12) << recall;
-            best_recall = std::max(recall, best_recall);
-        }
-        std::cout << std::endl;
-    }
-
-    std::cout << "Done searching. Now saving results " << std::endl;
-    uint64_t test_id = 0;
-    for (auto L : Lvec)
-    {
-        if (L < recall_at)
-        {
-            diskann::cout << "Ignoring search with L:" << L << " since it's smaller than K:" << recall_at << std::endl;
-            continue;
-        }
-        std::string cur_result_path_prefix = result_path_prefix + "_" + std::to_string(L);
-
-        std::string cur_result_path = cur_result_path_prefix + "_idx_uint32.bin";
-        diskann::save_bin<uint32_t>(cur_result_path, query_result_ids[test_id].data(), query_num, recall_at);
-
-        cur_result_path = cur_result_path_prefix + "_dists_float.bin";
-        diskann::save_bin<float>(cur_result_path, query_result_dists[test_id].data(), query_num, recall_at);
-
-        test_id++;
-    }
-
-    diskann::aligned_free(query);
-    return best_recall >= fail_if_recall_below ? 0 : -1;
-}
 
 template <typename T, typename LabelT = uint32_t>
 int search_memory_index_in_memory_replay(diskann::Metric &metric, diskann::AbstractIndex &index,
@@ -1289,7 +887,8 @@ int search_memory_index_in_memory_replay(diskann::Metric &metric, diskann::Abstr
                                          const float fail_if_recall_below, const uint32_t num_queries,
                                          diskann::UpdatedNodesInfo &updated_nodes_info,
                                          std::vector<diskann::ReplayTrace> &traces,
-                                         uint32_t inserted_begin, uint32_t inserted_end)
+                                         uint32_t inserted_begin, uint32_t inserted_end,
+                                         bool warmstart)
 {
     using TagT = uint32_t;
     // Load the query file
@@ -1441,62 +1040,6 @@ int search_memory_index_in_memory_replay(diskann::Metric &metric, diskann::Abstr
 
         // measurer.start();
 
-        // --- original sequential loop ---
-        // #pragma omp parallel for schedule(dynamic, 1) num_threads(num_threads)
-        // for (int64_t i = 0; i < (int64_t)query_num; i++)
-        // {
-        //     auto qs = std::chrono::high_resolution_clock::now();
-        //     if (filtered_search && !tags)
-        //     {
-        //         std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[i];
-        
-        //         auto retval = index.search_with_filters(query + i * query_aligned_dim, raw_filter, recall_at, L,
-        //                                                 query_result_ids[test_id].data() + i * recall_at,
-        //                                                 query_result_dists[test_id].data() + i * recall_at);
-        //         cmp_stats[i] = retval.second;
-        //     }
-        //     else if (metric == diskann::FAST_L2)
-        //     {
-        //         index.search_with_optimized_layout(query + i * query_aligned_dim, recall_at, L,
-        //                                            query_result_ids[test_id].data() + i * recall_at);
-        //     }
-        //     else if (tags)
-        //     {
-        //         if (!filtered_search)
-        //         {
-        //             index.search_with_tags_replay(query + i * query_aligned_dim, recall_at, L,
-        //                                           query_result_tags.data() + i * recall_at, nullptr, res,
-        //                                           updated_nodes_info, traces[i]);
-        //                                         //   traces[i], inserted_begin, inserted_end); // for naive reuse
-        //         }
-        //         else
-        //         {
-        //             std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[i];
-        
-        //             index.search_with_tags_replay(query + i * query_aligned_dim, recall_at, L,
-        //                                           query_result_tags.data() + i * recall_at, nullptr, res,
-        //                                           updated_nodes_info, traces[i], true, raw_filter);
-        //                                         //   traces[i], inserted_begin, inserted_end, true, raw_filter); // for naive reuse
-        //         }
-        
-        //         for (int64_t r = 0; r < (int64_t)recall_at; r++)
-        //         {
-        //             query_result_ids[test_id][recall_at * i + r] = query_result_tags[recall_at * i + r];
-        //         }
-        //     }
-        //     else
-        //     {
-        //         cmp_stats[i] = index
-        //                            .search(query + i * query_aligned_dim, recall_at, L,
-        //                                    query_result_ids[test_id].data() + i * recall_at)
-        //                            .second;
-        //     }
-        //     auto qe = std::chrono::high_resolution_clock::now();
-        //     std::chrono::duration<double> diff = qe - qs;
-        //     latency_stats[i] = (float)(diff.count() * 1000000);
-        // }
-        // --- original sequential loop (end) ---
-
         // --- SMT scheduling based on sorting ---
        #pragma omp parallel for schedule(dynamic)
         for (int64_t ii = 0; ii < (int64_t)query_num; ii++)
@@ -1525,7 +1068,7 @@ int search_memory_index_in_memory_replay(diskann::Metric &metric, diskann::Abstr
                 {
                     index.search_with_tags_replay(query + i * query_aligned_dim, recall_at, L,
                                                   query_result_tags.data() + i * recall_at, nullptr, res,
-                                                  updated_nodes_info, traces[i]);
+                                                  updated_nodes_info, traces[i], warmstart);
                                                 //   traces[i], inserted_begin, inserted_end); // for naive reuse
                 }
                 else
@@ -1534,7 +1077,7 @@ int search_memory_index_in_memory_replay(diskann::Metric &metric, diskann::Abstr
         
                     index.search_with_tags_replay(query + i * query_aligned_dim, recall_at, L,
                                                   query_result_tags.data() + i * recall_at, nullptr, res,
-                                                  updated_nodes_info, traces[i], true, raw_filter);
+                                                  updated_nodes_info, traces[i], warmstart, true, raw_filter);
                                                 //   traces[i], inserted_begin, inserted_end, true, raw_filter); // for naive reuse
                 }
         
@@ -1554,124 +1097,10 @@ int search_memory_index_in_memory_replay(diskann::Metric &metric, diskann::Abstr
             std::chrono::duration<double> diff = qe - qs;
             latency_stats[i] = (float)(diff.count() * 1000000);
         }
-        // --- SMT-aware two-phase scheduling (end) ---
-
-        // --- tid-based interleaved loop ---
-        // std::atomic<int64_t> heavy_cursor{0};
-        // std::atomic<int64_t> light_cursor{static_cast<int64_t>(query_num)}; // 开区间
-
-        // constexpr int64_t BATCH_SIZE = 16; // 批量获取，将 100K 次原子争用降低 16 倍
-
-        // #pragma omp parallel
-        // {
-        //     int tid = omp_get_thread_num();
-        //     // 偶数线程负责 Heavy，奇数线程负责 Light
-        //     bool prefer_heavy = (tid % 2 == 0);
-
-        //     while (true) {
-        //         int64_t start_batch = -1;
-        //         int64_t count = 0;
-
-        //         if (prefer_heavy) {
-        //             // ---------------- 偶数线程：优先拿 Heavy ----------------
-        //             int64_t h = heavy_cursor.fetch_add(BATCH_SIZE, std::memory_order_relaxed);
-        //             int64_t l = light_cursor.load(std::memory_order_relaxed);
-
-        //             if (h < l) {
-        //                 start_batch = h;
-        //                 count = std::min(BATCH_SIZE, l - h);
-        //             } else {
-        //                 // Heavy 已经碰撞耗尽，触发 Work-Stealing：转去拿尾部的 Light
-        //                 int64_t l_steal = light_cursor.fetch_sub(BATCH_SIZE, std::memory_order_relaxed) - BATCH_SIZE;
-        //                 int64_t h_check = heavy_cursor.load(std::memory_order_relaxed);
-        //                 if (l_steal + BATCH_SIZE > h_check) {
-        //                     start_batch = std::max(l_steal, h_check);
-        //                     count = (l_steal + BATCH_SIZE) - start_batch;
-        //                 } else {
-        //                     break; // 两个指针彻底交汇，任务全部完成
-        //                 }
-        //             }
-        //         } else {
-        //             // ---------------- 奇数线程：优先拿 Light ----------------
-        //             int64_t l = light_cursor.fetch_sub(BATCH_SIZE, std::memory_order_relaxed) - BATCH_SIZE;
-        //             int64_t h = heavy_cursor.load(std::memory_order_relaxed);
-
-        //             if (l + BATCH_SIZE > h) {
-        //                 start_batch = std::max(l, h);
-        //                 count = (l + BATCH_SIZE) - start_batch;
-        //             } else {
-        //                 // Light 已经碰撞耗尽，触发 Work-Stealing：转去拿头部的 Heavy
-        //                 int64_t h_steal = heavy_cursor.fetch_add(BATCH_SIZE, std::memory_order_relaxed);
-        //                 int64_t l_check = light_cursor.load(std::memory_order_relaxed);
-        //                 if (h_steal < l_check) {
-        //                     start_batch = h_steal;
-        //                     count = std::min(BATCH_SIZE, l_check - h_steal);
-        //                 } else {
-        //                     break; // 任务彻底完成
-        //                 }
-        //             }
-        //         }
-
-        //         if (count <= 0) break;
-
-        //         // ---------------- 批量执行拿到的一组 Query ----------------
-        //         for (int64_t b = 0; b < count; ++b) {
-        //             int64_t qi = query_costs[start_batch + b].second;
-
-        //             auto qs = std::chrono::high_resolution_clock::now();
-
-        //             if (filtered_search && !tags) {
-        //                 std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[qi];
-        //                 auto retval = index.search_with_filters(query + qi * query_aligned_dim, raw_filter, recall_at, L,
-        //                                                  query_result_ids[test_id].data() + qi * recall_at,
-        //                                                  query_result_dists[test_id].data() + qi * recall_at);
-        //                 cmp_stats[qi] = retval.second;
-        //             } 
-        //             else if (metric == diskann::FAST_L2) {
-        //                 index.search_with_optimized_layout(
-        //                     query + qi * query_aligned_dim, recall_at, L,
-        //                     query_result_ids[test_id].data() + qi * recall_at
-        //                 );
-        //             } 
-        //             else if (tags) {
-        //                 if (!filtered_search) {
-        //                     index.search_with_tags_replay(
-        //                         query + qi * query_aligned_dim, recall_at, L,
-        //                         query_result_tags.data() + qi * recall_at, nullptr, res,
-        //                         updated_nodes_info, traces[qi]
-        //                     );
-        //                 } else {
-        //                     std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[qi];
-        //                     index.search_with_tags_replay(
-        //                         query + qi * query_aligned_dim, recall_at, L,
-        //                         query_result_tags.data() + qi * recall_at, nullptr, res,
-        //                         updated_nodes_info, traces[qi], true, raw_filter
-        //                     );
-        //                 }
-        //                 for (int64_t r = 0; r < (int64_t)recall_at; r++) {
-        //                     query_result_ids[test_id][recall_at * qi + r] = query_result_tags[recall_at * qi + r];
-        //                 }
-        //             } 
-        //             else {
-        //                 cmp_stats[qi] = index.search(
-        //                     query + qi * query_aligned_dim, recall_at, L,
-        //                     query_result_ids[test_id].data() + qi * recall_at
-        //                 ).second;
-        //             }
-
-        //             auto qe = std::chrono::high_resolution_clock::now();
-        //             std::chrono::duration<double> diff = qe - qs;
-        //             latency_stats[qi] = (float)(diff.count() * 1000000);
-        //         }
-        //     }
-        // }
 
         std::chrono::duration<double> diff = std::chrono::high_resolution_clock::now() - s;
 
         // measurer.stop_and_print();
-        // for(auto node: traces[9].best_L_nodes){
-        //     std::cout << node.id << " " << node.distance << " " << std::endl;
-        // }
 
         double displayed_qps = query_num / diff.count();
 
@@ -1979,6 +1408,7 @@ void build_incremental_index_search(const std::string &data_path, diskann::Index
                                     const std::vector<uint32_t> &Lvec, const bool dynamic, const bool tags,
                                     const bool show_qps_per_thread, const std::vector<std::string> &query_filters,
                                     const float fail_if_recall_below, const uint32_t num_queries,
+                                    bool warmstart,
                                     SelectNumaNodeFn select_numa_node = nullptr)
 {
     size_t dim, aligned_dim;
@@ -2219,27 +1649,6 @@ void build_incremental_index_search(const std::string &data_path, diskann::Index
 
         free_numa_replicated_buffer(delta_buffers);
 
-        // int total_changed = 0;
-        // for (int i = 0; i < changed_nodes.size(); i++)
-        // {
-        //     if (changed_nodes[i] == 1)
-        //         total_changed++;
-        // }
-        // std::cout << "(After Insert) Total changed nodes: " << total_changed << " out of " << changed_nodes.size()
-        //           << std::endl;
-        // total_changed = 0;
-        // int max_changed_neighbors = 1;
-        // for (int i = 0; i < changed_neighbors.size(); i++)
-        // {
-        //     total_changed += changed_neighbors[i].size();
-        //     if (changed_neighbors[i].size() > max_changed_neighbors)
-        //         max_changed_neighbors = changed_neighbors[i].size();
-        // }
-        // std::cout << "Total changed neighbors: " << total_changed << std::endl;
-        // if (changed_neighbors.size() > 0)
-        //     std::cout << " avg changed: " << total_changed / changed_neighbors.size()
-        //               << " max changed: " << max_changed_neighbors << std::endl;
-
         int total_changed = 0;
         for (int i = 0; i < max_points_to_insert; i++)
         {
@@ -2275,40 +1684,6 @@ void build_incremental_index_search(const std::string &data_path, diskann::Index
     std::cout << "(After Update) Total changed nodes: " << total_changed << " out of " << max_points_to_insert
               << std::endl;
 
-    // total_changed = 0;
-    // int max_changed_neighbors = 1;
-    // assert(changed_nodes.size() == changed_neighbors.size());
-    // for (int i = 0; i < changed_neighbors.size(); i++)
-    // {
-    //     total_changed += changed_neighbors[i].size();
-    //     if (changed_neighbors[i].size() > max_changed_neighbors)
-    //         max_changed_neighbors = changed_neighbors[i].size();
-    // }
-    // std::cout << "(After delete) Total changed neighbors: " << total_changed
-    //           << " avg changed: " << total_changed / changed_neighbors.size()
-    //           << " max changed: " << max_changed_neighbors << std::endl;
-
-    // Build CSR format for the delta graph using changed_neighbors
-    // std::vector<uint32_t> deltaGraph_nodePointer(max_points_to_insert + 1, 0);
-    // std::vector<uint32_t> deltaGraph_neighbors(total_changed + 1);
-
-//     uint32_t counter = 0;
-//     for (int i = 0; i < max_points_to_insert; i++)
-//     {
-//         deltaGraph_nodePointer[i] = counter;
-//         counter += changed_neighbors[i].size();
-//     }
-//     deltaGraph_nodePointer[max_points_to_insert] = counter; // last element
-
-// #pragma omp parallel for
-//     for (int i = 0; i < changed_neighbors.size(); i++)
-//     {
-//         if (changed_neighbors[i].size() > 0)
-//             memcpy(deltaGraph_neighbors.data() + deltaGraph_nodePointer[i], changed_neighbors[i].data(),
-//                    changed_neighbors[i].size() * sizeof(uint32_t));
-//     }
-
-
     std::cout << "\n=== Search Updated Index=== " << std::endl;
     auto truthset_file = truthset_file_prefix + std::to_string(points_to_delete_from_beginning) + "-" +
                          std::to_string(last_point_threshold);
@@ -2316,7 +1691,8 @@ void build_incremental_index_search(const std::string &data_path, diskann::Index
                                                           num_threads, recall_at, print_all_recalls, Lvec, dynamic,
                                                           tags, show_qps_per_thread, query_filters, fail_if_recall_below,
                                                           num_queries, updated_nodes_info, traces,
-                                                          (uint32_t)start_deletes_after, (uint32_t)last_point_threshold);
+                                                          (uint32_t)start_deletes_after, (uint32_t)last_point_threshold,
+                                                          warmstart);
     // search_memory_index<float, uint16_t>(metric, *index, result_path_prefix, query_file, truthset_file,
     //                                      num_threads, recall_at, print_all_recalls, Lvec, dynamic, tags,
     //                                      show_qps_per_thread, query_filters, fail_if_recall_below, num_queries,
@@ -2345,7 +1721,7 @@ int main(int argc, char **argv)
     uint32_t K;
     uint32_t num_queries;
     std::vector<uint32_t> Lvec;
-    bool print_all_recalls, dynamic, tags, show_qps_per_thread;
+    bool print_all_recalls, dynamic, tags, show_qps_per_thread, warmstart;
     float fail_if_recall_below = 0.0f;
 
     po::options_description desc{program_options_utils::make_program_description(
@@ -2394,6 +1770,9 @@ int main(int argc, char **argv)
                                        "These number of points from the file are inserted after "
                                        "points_to_skip");
         optional_configs.add_options()("do_concurrent", po::value<bool>(&concurrent)->default_value(false), "");
+        optional_configs.add_options()("warmstart", po::value<bool>(&warmstart)->default_value(false),
+                                       "Use warm-start replay (iterate_to_fixed_point_replay_incre) for the "
+                                       "updated-index search. Default false.");
         optional_configs.add_options()("start_deletes_after",
                                        po::value<uint64_t>(&start_deletes_after)->default_value(0), "");
         optional_configs.add_options()("start_point_norm", po::value<float>(&start_point_norm)->default_value(0),
@@ -2577,14 +1956,14 @@ int main(int argc, char **argv)
                 num_start_pts, points_per_checkpoint, checkpoints_per_snapshot, index_path_prefix,
                 points_to_delete_from_beginning, start_deletes_after, concurrent, label_file, universal_label, metric,
                 result_path, query_file, gt_file_prefix, num_threads, K, print_all_recalls, Lvec, dynamic, tags,
-                show_qps_per_thread, query_filters, fail_if_recall_below, num_queries);
+                show_qps_per_thread, query_filters, fail_if_recall_below, num_queries, warmstart);
         else if (data_type == std::string("uint8"))
             build_incremental_index_search<uint8_t>(
                 data_path, params, points_to_skip, max_points_to_insert, beginning_index_size, start_point_norm,
                 num_start_pts, points_per_checkpoint, checkpoints_per_snapshot, index_path_prefix,
                 points_to_delete_from_beginning, start_deletes_after, concurrent, label_file, universal_label, metric,
                 result_path, query_file, gt_file_prefix, num_threads, K, print_all_recalls, Lvec, dynamic, tags,
-                show_qps_per_thread, query_filters, fail_if_recall_below, num_queries);
+                show_qps_per_thread, query_filters, fail_if_recall_below, num_queries, warmstart);
         else if (data_type == std::string("float"))
         {
             build_incremental_index_search<float>(
@@ -2592,7 +1971,7 @@ int main(int argc, char **argv)
                 num_start_pts, points_per_checkpoint, checkpoints_per_snapshot, index_path_prefix,
                 points_to_delete_from_beginning, start_deletes_after, concurrent, label_file, universal_label, metric,
                 result_path, query_file, gt_file_prefix, num_threads, K, print_all_recalls, Lvec, dynamic, tags,
-                show_qps_per_thread, query_filters, fail_if_recall_below, num_queries);
+                show_qps_per_thread, query_filters, fail_if_recall_below, num_queries, warmstart);
         }
         else
             std::cout << "Unsupported type. Use float/int8/uint8" << std::endl;

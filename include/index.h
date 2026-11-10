@@ -284,7 +284,8 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     DISKANN_DLLEXPORT size_t search_with_tags_replay(const T *query, const uint64_t K, const uint32_t L, TagT *tags,
                                                      float *distances, std::vector<T *> &res_vectors,
                                                      UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
-                                                     bool use_filters = false, const std::string filter_label = "");
+                                                     bool warmstart = false, bool use_filters = false,
+                                                     const std::string filter_label = "");
 
     // Brute-force scan variant: after trace replay, exhaustively computes
     // distances for newly inserted points in [inserted_begin, inserted_end).
@@ -399,6 +400,7 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     virtual size_t _search_with_tags_replay(const DataType &query, const uint64_t K, const uint32_t L,
                                             const TagType &tags, float *distances, DataVector &res_vectors,
                                             UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
+                                            bool warmstart = false,
                                              bool use_filters = false,
                                             const std::string filter_label = "") override;
 

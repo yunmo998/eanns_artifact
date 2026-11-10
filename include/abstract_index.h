@@ -136,6 +136,7 @@ class AbstractIndex
     size_t search_with_tags_replay(const data_type *query, const uint64_t K, const uint32_t L, tag_type *tags,
                                    float *distances, std::vector<data_type *> &res_vectors,
                                    UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
+                                   bool warmstart = false,
                                     bool use_filters = false,
                                    const std::string filter_label = "");
 
@@ -299,6 +300,7 @@ class AbstractIndex
     virtual size_t _search_with_tags_replay(const DataType &query, const uint64_t K, const uint32_t L,
                                             const TagType &tags, float *distances, DataVector &res_vectors,
                                             UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
+                                            bool warmstart = false,
                                             bool use_filters = false,
                                             const std::string filter_label = "") = 0;
 

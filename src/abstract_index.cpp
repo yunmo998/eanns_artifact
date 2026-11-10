@@ -142,6 +142,7 @@ template <typename data_type, typename tag_type>
 size_t AbstractIndex::search_with_tags_replay(const data_type *query, const uint64_t K, const uint32_t L,
                                               tag_type *tags, float *distances, std::vector<data_type *> &res_vectors,
                                               UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
+                                              bool warmstart,
                                                bool use_filters,
                                               const std::string filter_label)
 {
@@ -149,7 +150,7 @@ size_t AbstractIndex::search_with_tags_replay(const data_type *query, const uint
     auto any_tags = std::any(tags);
     auto any_res_vectors = DataVector(res_vectors);
     return this->_search_with_tags_replay(any_query, K, L, any_tags, distances, any_res_vectors, updated_nodes_info, trace,
-                                          use_filters, filter_label);
+                                          warmstart, use_filters, filter_label);
 }
 
 template <typename data_type, typename tag_type>
@@ -876,63 +877,63 @@ template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_incre<int8_t, 
 // with traces
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<float, int32_t>(
     const float *query, const uint64_t K, const uint32_t L, int32_t *tags, float *distances,
-    std::vector<float *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool use_filters,
-    const std::string filter_label);
+    std::vector<float *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool warmstart,
+    bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<uint8_t, int32_t>(
     const uint8_t *query, const uint64_t K, const uint32_t L, int32_t *tags, float *distances,
-    std::vector<uint8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool use_filters,
-    const std::string filter_label);
+    std::vector<uint8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool warmstart,
+    bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<int8_t, int32_t>(
     const int8_t *query, const uint64_t K, const uint32_t L, int32_t *tags, float *distances,
-    std::vector<int8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool use_filters,
-    const std::string filter_label);
+    std::vector<int8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool warmstart,
+    bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<float, uint32_t>(
     const float *query, const uint64_t K, const uint32_t L, uint32_t *tags, float *distances,
     std::vector<float *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
-    bool use_filters, const std::string filter_label);
+    bool warmstart, bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<uint8_t, uint32_t>(
     const uint8_t *query, const uint64_t K, const uint32_t L, uint32_t *tags, float *distances,
     std::vector<uint8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
-    bool use_filters, const std::string filter_label);
+    bool warmstart, bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<int8_t, uint32_t>(
     const int8_t *query, const uint64_t K, const uint32_t L, uint32_t *tags, float *distances,
-    std::vector<int8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool use_filters,
-    const std::string filter_label);
+    std::vector<int8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool warmstart,
+    bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<float, int64_t>(
     const float *query, const uint64_t K, const uint32_t L, int64_t *tags, float *distances,
     std::vector<float *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
-    bool use_filters, const std::string filter_label);
+    bool warmstart, bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<uint8_t, int64_t>(
     const uint8_t *query, const uint64_t K, const uint32_t L, int64_t *tags, float *distances,
     std::vector<uint8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
-    bool use_filters, const std::string filter_label);
+    bool warmstart, bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<int8_t, int64_t>(
     const int8_t *query, const uint64_t K, const uint32_t L, int64_t *tags, float *distances,
-    std::vector<int8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool use_filters,
-    const std::string filter_label);
+    std::vector<int8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool warmstart,
+    bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<float, uint64_t>(
     const float *query, const uint64_t K, const uint32_t L, uint64_t *tags, float *distances,
-    std::vector<float *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool use_filters,
-    const std::string filter_label);
+    std::vector<float *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool warmstart,
+    bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<uint8_t, uint64_t>(
     const uint8_t *query, const uint64_t K, const uint32_t L, uint64_t *tags, float *distances,
-    std::vector<uint8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool use_filters,
-    const std::string filter_label);
+    std::vector<uint8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace, bool warmstart,
+    bool use_filters, const std::string filter_label);
 
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<int8_t, uint64_t>(
     const int8_t *query, const uint64_t K, const uint32_t L, uint64_t *tags, float *distances,
     std::vector<int8_t *> &res_vectors, UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
-    bool use_filters, const std::string filter_label);
+    bool warmstart, bool use_filters, const std::string filter_label);
 
 // New overload with inserted range (no UpdatedNodesInfo)
 template DISKANN_DLLEXPORT size_t AbstractIndex::search_with_tags_replay<float, int32_t>(

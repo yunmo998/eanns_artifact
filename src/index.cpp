@@ -3595,6 +3595,9 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
     return std::make_pair(hops, cmps);
 }
 
+/*
+///////////// Warm start /////////////////
+*/
 
 template <typename T, typename TagT, typename LabelT>
 std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_replay_incre(
@@ -4086,556 +4089,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
     return std::make_pair(hops, cmps);
 }
 
-
-/*
-template <typename T, typename TagT, typename LabelT>
-std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_replay_incre(
-    InMemQueryScratch<T> *scratch, const uint32_t Lsize, const std::vector<uint32_t> &init_ids,
-    UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
-    bool use_filter, const std::vector<LabelT> &filter_labels, bool search_invocation)
-{
-    tsl::robin_set<uint32_t> &inserted_into_pool_rs = scratch->inserted_into_pool_rs();
-    boost::dynamic_bitset<> &inserted_into_pool_bs = scratch->inserted_into_pool_bs();
-    std::vector<uint32_t> &id_scratch = scratch->id_scratch();
-    std::vector<float> &dist_scratch = scratch->dist_scratch();
-    assert(id_scratch.size() == 0);
-
-    T *aligned_query = scratch->aligned_query();
-
-    float *pq_dists = nullptr;
-
-    _pq_data_store->preprocess_query(aligned_query, scratch);
-
-    // if (_expanded_nodes.size() > 0 || id_scratch.size() > 0)
-    // {
-    //     throw ANNException("ERROR: Clear scratch space before passing.", -1, __FUNCSIG__, __FILE__, __LINE__);
-    // }
-
-    // Decide whether to use bitset or robin set to mark visited nodes
-    auto total_num_points = _max_points + _num_frozen_pts;
-    bool fast_iterate = total_num_points <= MAX_POINTS_FOR_USING_BITSET;
-
-    if (fast_iterate)
-    {
-        if (inserted_into_pool_bs.size() < total_num_points)
-        {
-            // hopefully using 2X will reduce the number of allocations.
-            auto resize_size =
-                2 * total_num_points > MAX_POINTS_FOR_USING_BITSET ? MAX_POINTS_FOR_USING_BITSET : 2 * total_num_points;
-            inserted_into_pool_bs.resize(resize_size);
-        }
-    }
-
-    // Lambda to determine if a node has been visited
-    auto is_not_visited = [this, fast_iterate, &inserted_into_pool_bs, &inserted_into_pool_rs](const uint32_t id) {
-        return fast_iterate ? inserted_into_pool_bs[id] == 0
-                            : inserted_into_pool_rs.find(id) == inserted_into_pool_rs.end();
-    };
-
-    // Lambda to batch compute query<-> node distances in PQ space
-    auto compute_dists = [this, scratch, pq_dists](const std::vector<uint32_t> &ids, std::vector<float> &dists_out) {
-        _pq_data_store->get_distance(scratch->aligned_query(), ids, dists_out, scratch);
-    };
-
-    uint32_t hops = 0;
-    uint32_t cmps = 0;
-
-
-    int K = Lsize;
-    // bool print = false;
-    // TagT tag;
-    
-    // if(print)
-    //     std::cout << "init: ";
-    // if (trace.best_L_nodes.size() > K)
-    {
-        // const auto keep_k = static_cast<size_t>(K);
-        // diskann::NeighborPriorityQueue trimmed(trace.best_L_nodes.capacity());
-        for (size_t i = 0; i < K; ++i)
-        {
-
-            trace.best_L_nodes.set_unexpanded(i);
-            // trimmed.insert(trace.best_L_nodes[i]);
-            // auto id = trace.best_L_nodes[i].id;
-            // if (fast_iterate)
-            // {
-            //     inserted_into_pool_bs[id] = 1;
-            // }
-            // else
-            // {
-            //     inserted_into_pool_rs.insert(id);
-            // }
-        }
-        // trace.best_L_nodes = std::move(trimmed);
-        trace.best_L_nodes.reset(K);
-    }
-    
-    uint found_index = 0;
-    uint valid_point = 0;
-    // uint visit_cnt = 0;
-    // uint hit = 0;
-    // uint added_expanded_nodes = 0;
-    // std::vector<bool> expanded_visited(trace.visited.size(), false);
-
-    std::vector<VisitedNode> new_visited;
-    new_visited.reserve(trace.visited.size() + 128);
-
-    // auto s = std::chrono::high_resolution_clock::now();
-    // double cmp_time = 0;
-
-    // uint32_t unroll_t = 1; // Adjust this parameter to control how many extra nodes to unroll
-    uint itr = 0;
-    while (trace.best_L_nodes.has_unexpanded_node())
-    {
-        auto nbr = trace.best_L_nodes.closest_unexpanded();
-        auto n = nbr.id;
-        itr++;
-
-        if (_dynamic_index)
-        {
-            LockGuard guard(_locks[n]);
-            auto nbrs = _graph_store->get_neighbours(n);
-
-            // int last_idx = - 1;
-
-            for (auto id : nbrs)
-            {
-                assert(id < _max_points + _num_frozen_pts);
-
-                if (use_filter)
-                {
-                    // NOTE: NEED TO CHECK IF THIS CORRECT WITH NEW LOCKS.
-                    if (!detect_common_filters(id, search_invocation, filter_labels))
-                        continue;
-                }
-
-                // if (is_not_visited(id))
-                {
-                    // bool found_nbr = false;
-                    // visit_cnt++;
-                    {
-                        // auto it = std::lower_bound(
-                        //     trace.visited.begin(), trace.visited.end(), id,
-                        //     [](const VisitedNode &node, uint32_t id) { return node.id < id; });
-                        auto it = trace.visited_map.find(id);
-                        if (it != trace.visited_map.end())
-                        // if (it != trace.visited.end() && it->id == id)
-                        {
-                            // last_idx = (int)(it - trace.visited.data());
-                            // if (fast_iterate)
-                            // {
-                            //     inserted_into_pool_bs[id] = 1;
-                            // }
-                            // else
-                            // {
-                            //     inserted_into_pool_rs.insert(id);
-                            // }
-                            // Neighbor nn = Neighbor(id, it->distance);
-                            Neighbor nn = Neighbor(id, it->second);
-                            trace.best_L_nodes.insert(nn);
-                            // expanded_visited[it - trace.visited.begin()] = true;
-                            continue;
-                        }
-                    }
-                    // if(!found_nbr)
-                    // {
-                        // _pq_data_store->prefetch_vector(id);
-                        id_scratch.push_back(id);
-                    // }
-                    // if (fast_iterate)
-                    // {
-                    //     inserted_into_pool_bs[id] = 1;
-                    // }
-                    // else
-                    // {
-                    //     inserted_into_pool_rs.insert(id);
-                    // }
-
-                }
-            }
-        }
-        else
-        {
-            std::string err = "Delta graph based incremental search should only be used with dynamic index.";
-            throw ANNException(err, -1, __FUNCSIG__, __FILE__, __LINE__);
-        }
-
-        {
-
-            assert(dist_scratch.capacity() >= id_scratch.size());
-            compute_dists(id_scratch, dist_scratch);
-            cmps += (uint32_t)id_scratch.size();
-
-            // Insert <id, dist> pairs into the pool of candidates
-            // if(read_cache){
-            for (size_t m = 0; m < id_scratch.size(); ++m)
-            {
-                trace.best_L_nodes.insert(Neighbor(id_scratch[m], dist_scratch[m]));
-                // new_visited.emplace_back(VisitedNode(id_scratch[m], dist_scratch[m]));
-                trace.visited_map.insert({id_scratch[m], dist_scratch[m]});
-            }
-            id_scratch.clear();
-            dist_scratch.clear();
-        }
-    }
-
-    // {
-    //     // new_expanded.reserve(trace.expanded.size());
-    //     // new_visited.reserve(trace.visited.size());
-
-    //     int pos = 0;
-    //     for (uint i = 0; i < trace.visited.size(); i++)
-    //     {
-    //         if (!expanded_visited[i])
-    //             continue;
-            
-    //         trace.visited[pos++] = trace.visited[i];
-    //     }
-
-    //     if (!new_visited.empty())
-    //     {
-    //         std::sort(new_visited.begin(), new_visited.end(),
-    //                   [](const VisitedNode &a, const VisitedNode &b) { return a.id < b.id; });
-
-    //         const auto old_size = trace.visited.size();
-    //         trace.visited.insert(trace.visited.end(),
-    //                              std::make_move_iterator(new_visited.begin()),
-    //                              std::make_move_iterator(new_visited.end()));
-    //         std::inplace_merge(trace.visited.begin(),
-    //                            trace.visited.begin() + old_size,
-    //                            trace.visited.end(),
-    //                            [](const VisitedNode &a, const VisitedNode &b) { return a.id < b.id; });
-    //     }
-    // }
-    return std::make_pair(hops, cmps);
-}
-*/
-
-// template <typename T, typename TagT, typename LabelT>
-// std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_replay_incre(
-//     InMemQueryScratch<T> *scratch, const uint32_t Lsize, const std::vector<uint32_t> &init_ids,
-//     UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
-//     bool use_filter, const std::vector<LabelT> &filter_labels, bool search_invocation)
-// {
-//     // std::vector<Neighbor> &_expanded_nodes = scratch->pool();
-//     // NeighborPriorityQueue &best_L_nodes = scratch->best_l_nodes();
-//     // NeighborPriorityQueue &best_L_nodes = trace.best_L_nodes;
-//     // best_L_nodes.reserve(Lsize);
-//     tsl::robin_set<uint32_t> &inserted_into_pool_rs = scratch->inserted_into_pool_rs();
-//     boost::dynamic_bitset<> &inserted_into_pool_bs = scratch->inserted_into_pool_bs();
-//     std::vector<uint32_t> &id_scratch = scratch->id_scratch();
-//     std::vector<float> &dist_scratch = scratch->dist_scratch();
-//     assert(id_scratch.size() == 0);
-//     // std::vector<Neighbor> existing_computed;
-
-//     T *aligned_query = scratch->aligned_query();
-
-//     float *pq_dists = nullptr;
-
-//     _pq_data_store->preprocess_query(aligned_query, scratch);
-
-//     // if (_expanded_nodes.size() > 0 || id_scratch.size() > 0)
-//     // {
-//     //     throw ANNException("ERROR: Clear scratch space before passing.", -1, __FUNCSIG__, __FILE__, __LINE__);
-//     // }
-
-//     // Decide whether to use bitset or robin set to mark visited nodes
-//     auto total_num_points = _max_points + _num_frozen_pts;
-//     bool fast_iterate = total_num_points <= MAX_POINTS_FOR_USING_BITSET;
-
-//     if (fast_iterate)
-//     {
-//         if (inserted_into_pool_bs.size() < total_num_points)
-//         {
-//             // hopefully using 2X will reduce the number of allocations.
-//             auto resize_size =
-//                 2 * total_num_points > MAX_POINTS_FOR_USING_BITSET ? MAX_POINTS_FOR_USING_BITSET : 2 * total_num_points;
-//             inserted_into_pool_bs.resize(resize_size);
-//         }
-//     }
-
-//     // Lambda to determine if a node has been visited
-//     auto is_not_visited = [this, fast_iterate, &inserted_into_pool_bs, &inserted_into_pool_rs](const uint32_t id) {
-//         return fast_iterate ? inserted_into_pool_bs[id] == 0
-//                             : inserted_into_pool_rs.find(id) == inserted_into_pool_rs.end();
-//     };
-
-//     // Lambda to batch compute query<-> node distances in PQ space
-//     auto compute_dists = [this, scratch, pq_dists](const std::vector<uint32_t> &ids, std::vector<float> &dists_out) {
-//         _pq_data_store->get_distance(scratch->aligned_query(), ids, dists_out, scratch);
-//     };
-
-//     uint32_t hops = 0;
-//     uint32_t cmps = 0;
-
-//     // std::cout << "beam set: ";
-   
-
-//     for(int i = 0; i < trace.best_L_nodes.size(); i++)
-//     {
-//         auto nbr = trace.best_L_nodes[i];
-//         auto id = nbr.id;
-//         if (fast_iterate)
-//         {
-//             inserted_into_pool_bs[id] = 1;
-//         }
-//         else
-//         {
-//             inserted_into_pool_rs.insert(id);
-//         }
-//         // std::cout << id << "/" << nbr.distance << "\t";
-//     }
-//     // std::cout << std::endl;
-
-//     // trace.best_L_nodes.reserve(Lsize * 1.2);
-//     int compute_cnt = 0;
-//     for (size_t i = 0; i < trace.expanded.size(); i++) 
-//     {
-//         // std::cout << "Expanding " << trace.expanded[i].id << " with farthest distance " << trace.expanded[i].distance << std::endl;
-//         uint32_t n = trace.expanded[i].id;
-//         // else
-//         // {
-//         //     std::cout << "cloest ngh: " << trace.expanded[i].distance << "\t";
-//         // }
-//         if (updated_nodes_info.changed_nodes[n] == 1)
-//         {
-//             ////// Prefetch graph data //////////
-//             uint prefetch_idx = i + 2;
-//             while(prefetch_idx < trace.expanded.size()){
-//                 uint32_t n2 = trace.expanded[prefetch_idx].id;
-//                 if (updated_nodes_info.changed_nodes[n2] == 1)
-//                 {
-//                     // prefetch
-//                     const auto& next_nbrs = _graph_store->get_neighbours(n2);
-//                     _mm_prefetch((const char*)&next_nbrs, _MM_HINT_T0);
-//                     // _mm_prefetch((const char*)next_nbrs.data(), _MM_HINT_T0);
-//                     break;
-//                 }
-//                 else{
-//                     prefetch_idx++;
-//                 }
-//             }
-//              ////// Prefetch graph data END //////////
-
-//             // id_scratch.clear();
-//             // dist_scratch.clear();
-
-//             if (_dynamic_index)
-//             {
-//                 LockGuard guard(_locks[n]);
-//                 auto nbrs = _graph_store->get_neighbours(n);
-//                 if(trace.best_L_nodes.last_distance() <= trace.expanded[i].distance)
-//                 {
-//                     // only hanlde delta edges
-//                     // std::cout << "handle delta edges for node " << n << std::endl;
-//                     if (nbrs.size() <= updated_nodes_info.added_ngh_bitmap.size())
-//                     {
-//                         const uint64_t bitmap = updated_nodes_info.added_ngh_bitmap[n];
-//                         for (size_t nbr_idx = 0; nbr_idx < nbrs.size(); ++nbr_idx)
-//                         {
-//                             if ((bitmap & (uint64_t(1) << nbr_idx)) == 0)
-//                             {
-//                                 continue;
-//                             }
-                            
-//                             auto id = nbrs[nbr_idx];
-//                             // std::cout << "compute " << id << std::endl;
-//                             assert(id < _max_points + _num_frozen_pts);
-//                             if (use_filter)
-//                             {
-//                                 if (!detect_common_filters(id, search_invocation, filter_labels))
-//                                     continue;
-//                             }
-
-//                             if (is_not_visited(id))
-//                             {
-//                                 // _pq_data_store->prefetch_vector(id);
-//                                 id_scratch.push_back(id);
-//                             }
-//                         }
-//                     }
-//                     else
-//                     {
-//                         std::cout << "error! current bitmap size is too small for # neigh " << nbrs.size() <<  "\t" << updated_nodes_info.added_ngh_bitmap.size() << std::endl;
-//                     }
-//                 }
-//                 else // re-expand all neighbors
-//                 {
-//                     // std::cout << "re-expand all neighbors for node " << n << std::endl;
-//                     for (auto id : nbrs)
-//                     {
-//                         // std::cout << id << "\t";
-//                         assert(id < _max_points + _num_frozen_pts);
-//                         if (use_filter)
-//                         {
-//                             // NOTE: NEED TO CHECK IF THIS CORRECT WITH NEW LOCKS.
-//                             if (!detect_common_filters(id, search_invocation, filter_labels))
-//                                 continue;
-//                         }
-
-//                         if (is_not_visited(id))
-//                         {                    
-//                             _pq_data_store->prefetch_vector(id);
-//                             id_scratch.push_back(id);
-//                         }
-//                     }       
-//                 }
-                
-//             }
-//             else
-//             {
-//                 std::string err = "Delta graph based incremental search should only be used with dynamic index.";
-//                 throw ANNException(err, -1, __FUNCSIG__, __FILE__, __LINE__);
-//             }
-//         }
-
-//         // if(i != 0 && i % 2 == 0)
-//         if(id_scratch.size() > 8)
-//         {
-//             for (auto id : id_scratch)
-//             {
-//                 // std::cout << id << " ";
-//                 if (fast_iterate)
-//                 {
-//                     inserted_into_pool_bs[id] = 1;
-//                 }
-//                 else
-//                 {
-//                     inserted_into_pool_rs.insert(id);
-//                 }
-//             }    
-
-//             assert(dist_scratch.capacity() >= id_scratch.size());
-//             compute_dists(id_scratch, dist_scratch);
-//             cmps += (uint32_t)id_scratch.size();
-
-//             for (size_t m = 0; m < id_scratch.size(); ++m)
-//             {
-//                 trace.best_L_nodes.insert(Neighbor(id_scratch[m], dist_scratch[m]));
-//             }
-//             id_scratch.clear();
-//             dist_scratch.clear();
-//         }
-//     } 
-//     // std::vector<uint32_t> id_scratch2;
-
-//     if(id_scratch.size() > 0)
-//     {
-//         for (auto id : id_scratch)
-//         {
-//             // std::cout << id << " ";
-//             if (fast_iterate)
-//             {
-//                 inserted_into_pool_bs[id] = 1;
-//             }
-//             else
-//             {
-//                 inserted_into_pool_rs.insert(id);
-//             }
-//         }    
-
-//         assert(dist_scratch.capacity() >= id_scratch.size());
-//         compute_dists(id_scratch, dist_scratch);
-//         cmps += (uint32_t)id_scratch.size();
-//     }
-
-//     // uint32_t unroll_t = 1; // Adjust this parameter to control how many extra nodes to unroll
-//     uint rest_cnt = 0;
-//     TagT tag;
-//     while (trace.best_L_nodes.has_unexpanded_node())
-//     {
-//         auto nbr = trace.best_L_nodes.closest_unexpanded();
-//         auto n = nbr.id;
-
-//         // if(trace.best_L_nodes.has_unexpanded_node())
-//         // {
-//         //     auto next_n = trace.best_L_nodes.closest_unexpanded_prefetch().id;
-//         //     const auto& next_nbrs = _graph_store->get_neighbours(next_n);
-//         //     _mm_prefetch((const char*)&next_nbrs, _MM_HINT_T0);
-//         //     _mm_prefetch((const char*)next_nbrs.data(), _MM_HINT_T0);
-//         // }
-
-//         // Find which of the nodes in des have not been visited before
-//         id_scratch.clear();
-//         dist_scratch.clear();
-//         if (_dynamic_index)
-//         {
-//             LockGuard guard(_locks[n]);
-//             auto nbrs = _graph_store->get_neighbours(n);
-//             for (auto id : nbrs)
-//             {
-//                 assert(id < _max_points + _num_frozen_pts);
-//                 if (use_filter)
-//                 {
-//                     // NOTE: NEED TO CHECK IF THIS CORRECT WITH NEW LOCKS.
-//                     if (!detect_common_filters(id, search_invocation, filter_labels))
-//                         continue;
-//                 }
-
-//                 if (is_not_visited(id))
-//                 {                    
-//                     // auto it = std::lower_bound(trace.visited.begin(), trace.visited.end(), id, 
-//                     //     [](const VisitedNode& node, uint32_t val) {
-//                     //         return node.id < val; 
-//                     //     }
-//                     // );
-//                     // if (it != trace.visited.end() && it->id == id)
-//                     // {
-//                     //     if (fast_iterate)
-//                     //     {
-//                     //         inserted_into_pool_bs[id] = 1;
-//                     //     }
-//                     //     else
-//                     //     {
-//                     //         inserted_into_pool_rs.insert(id);
-//                     //     }
-//                     //     Neighbor nn = Neighbor(id, it->distance);
-//                     //     trace.best_L_nodes.insert(nn);
-//                     // }
-//                     // else
-//                     // {
-//                         _pq_data_store->prefetch_vector(id);
-//                         id_scratch.push_back(id);
-//                     //     compute_cnt++;
-//                     // }
-//                 }
-//             }       
-//         }
-//         else
-//         {
-//             std::string err = "Delta graph based incremental search should only be used with dynamic index.";
-//             throw ANNException(err, -1, __FUNCSIG__, __FILE__, __LINE__);
-//         }
-   
-//         for (auto id : id_scratch)
-//         {
-//             // std::cout << id << " ";
-//             if (fast_iterate)
-//             { 
-//                 inserted_into_pool_bs[id] = 1;
-//             }
-//             else
-//             {
-//                 inserted_into_pool_rs.insert(id);
-//             }
-//         }    
-
-//         assert(dist_scratch.capacity() >= id_scratch.size());
-//         compute_dists(id_scratch, dist_scratch);
-//         cmps += (uint32_t)id_scratch.size();
-
-//         for (size_t m = 0; m < id_scratch.size(); ++m)
-//         {
-//             trace.best_L_nodes.insert(Neighbor(id_scratch[m], dist_scratch[m]));
-//         }
-//         // id_scratch = id_scratch2;
-//         // id_scratch2.clear();
-//         // std::cout << rest_cnt << "/" << total_cnt << "\t";
-//     }
-//     // std::cout << compute_cnt << "\t";
-//     // std::cout << bypass_cnt << "/" << total_cnt << std::endl;
-//     return std::make_pair(hops, cmps);
-// }
 
 template <typename T, typename TagT, typename LabelT>
 void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, uint32_t Lindex,
@@ -6344,6 +5797,7 @@ template <typename T, typename TagT, typename LabelT>
 size_t Index<T, TagT, LabelT>::_search_with_tags_replay(const DataType &query, const uint64_t K, const uint32_t L,
                                                         const TagType &tags, float *distances, DataVector &res_vectors,
                                                         UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
+                                                        bool warmstart,
                                                         bool use_filters,
                                                         const std::string filter_label)
 {
@@ -6351,7 +5805,7 @@ size_t Index<T, TagT, LabelT>::_search_with_tags_replay(const DataType &query, c
     {
         return this->search_with_tags_replay(std::any_cast<const T *>(query), K, L, std::any_cast<TagT *>(tags),
                                              distances, res_vectors.get<std::vector<T *>>(), updated_nodes_info, trace,
-                                             use_filters, filter_label);
+                                             warmstart, use_filters, filter_label);
     }
     catch (const std::bad_any_cast &e)
     {
@@ -7103,6 +6557,7 @@ template <typename T, typename TagT, typename LabelT>
 size_t Index<T, TagT, LabelT>::search_with_tags_replay(const T *query, const uint64_t K, const uint32_t L, TagT *tags,
                                                        float *distances, std::vector<T *> &res_vectors,
                                                        UpdatedNodesInfo &updated_nodes_info, ReplayTrace &trace,
+                                                       bool warmstart,
                                                        bool use_filters,
                                                        const std::string filter_label)
 {
@@ -7140,7 +6595,12 @@ size_t Index<T, TagT, LabelT>::search_with_tags_replay(const T *query, const uin
     if (!use_filters)
     {
         const std::vector<LabelT> unused_filter_label;
-        iterate_to_fixed_point_replay(scratch, L, init_ids, updated_nodes_info, trace, false, unused_filter_label, true);
+        if (warmstart)
+            iterate_to_fixed_point_replay_incre(scratch, L, init_ids, updated_nodes_info, trace, false,
+                                                unused_filter_label, true);
+        else
+            iterate_to_fixed_point_replay(scratch, L, init_ids, updated_nodes_info, trace, false, unused_filter_label,
+                                          true);
         // iterate_to_fixed_point(scratch, L, init_ids, trace, false, unused_filter_label, true);
     }
     else
@@ -7148,7 +6608,10 @@ size_t Index<T, TagT, LabelT>::search_with_tags_replay(const T *query, const uin
         std::vector<LabelT> filter_vec;
         auto converted_label = this->get_converted_label(filter_label);
         filter_vec.push_back(converted_label);
-        iterate_to_fixed_point_replay(scratch, L, init_ids, updated_nodes_info, trace, true, filter_vec, true);
+        if (warmstart)
+            iterate_to_fixed_point_replay_incre(scratch, L, init_ids, updated_nodes_info, trace, true, filter_vec, true);
+        else
+            iterate_to_fixed_point_replay(scratch, L, init_ids, updated_nodes_info, trace, true, filter_vec, true);
         // iterate_to_fixed_point(scratch, L, init_ids, trace, true, filter_vec, true);
     }
 
