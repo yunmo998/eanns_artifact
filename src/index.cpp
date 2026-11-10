@@ -2721,44 +2721,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_inc
         _pq_data_store->get_distance(scratch->aligned_query(), ids, dists_out, scratch);
     };
 
-    // Initialize the candidate pool with starting points
-    // for (auto id : init_ids)
-    // {
-    //     if (id >= _max_points + _num_frozen_pts)
-    //     {
-    //         diskann::cerr << "Out of range loc found as an edge : " << id << std::endl;
-    //         throw diskann::ANNException(std::string("Wrong loc") + std::to_string(id), -1, __FUNCSIG__, __FILE__,
-    //                                     __LINE__);
-    //     }
-
-    //     if (use_filter)
-    //     {
-    //         if (!detect_common_filters(id, search_invocation, filter_labels))
-    //             continue;
-    //     }
-
-    //     if (is_not_visited(id))
-    //     {
-    //         if (fast_iterate)
-    //         {
-    //             inserted_into_pool_bs[id] = 1;
-    //         }
-    //         else
-    //         {
-    //             inserted_into_pool_rs.insert(id);
-    //         }
-
-    //         float distance;
-    //         uint32_t ids[] = {id};
-    //         float distances[] = {std::numeric_limits<float>::max()};
-    //         _pq_data_store->get_distance(aligned_query, ids, 1, distances, scratch);
-    //         distance = distances[0];
-
-    //         Neighbor nn = Neighbor(id, distance);
-    //         best_L_nodes.insert(nn);
-    //     }
-    // }
-
     for (auto nbr : expanded_nodes)
     {
         auto n = nbr.id;
@@ -2778,11 +2740,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_inc
     TagT tag;
     while (best_L_nodes.has_unexpanded_node())
     {
-        // for(int i = 0; i < best_L_nodes.size(); i++)
-        // {
-        //     auto node = best_L_nodes[i];
-        //     std::cout << node.id << "\t";
-        // }
 
         auto nbr = best_L_nodes.closest_unexpanded();
         auto n = nbr.id;
@@ -2938,59 +2895,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_inc
     {
         expanded_nodes_map[nbr.id] = nbr.distance;
     }
-
-    // Initialize the candidate pool with starting points
-    // for (auto id : init_ids)
-    // {
-    //     if (id >= _max_points + _num_frozen_pts)
-    //     {
-    //         diskann::cerr << "Out of range loc found as an edge : " << id << std::endl;
-    //         throw diskann::ANNException(std::string("Wrong loc") + std::to_string(id), -1, __FUNCSIG__, __FILE__,
-    //                                     __LINE__);
-    //     }
-
-    //     if (use_filter)
-    //     {
-    //         if (!detect_common_filters(id, search_invocation, filter_labels))
-    //             continue;
-    //     }
-
-    //     if (is_not_visited(id))
-    //     {
-    //         if (fast_iterate)
-    //         {
-    //             inserted_into_pool_bs[id] = 1;
-    //         }
-    //         else
-    //         {
-    //             inserted_into_pool_rs.insert(id);
-    //         }
-
-    //         float distance;
-    //         uint32_t ids[] = {id};
-    //         float distances[] = {std::numeric_limits<float>::max()};
-    //         _pq_data_store->get_distance(aligned_query, ids, 1, distances, scratch);
-    //         distance = distances[0];
-
-    //         Neighbor nn = Neighbor(id, distance);
-    //         best_L_nodes.insert(nn);
-    //     }
-    // }
-
-    // std::cout << "Init: ";
-    // for(int i = 0; i < best_L_nodes.size(); i++)
-    // {
-    //     auto node = best_L_nodes[i];
-    //     std::cout << node.id << "\t";
-    // }
-    // std::cout << std::endl;
-    // std::cout << "Dist: ";
-    // for(int i = 0; i < best_L_nodes.size(); i++)
-    // {
-    //     auto node = best_L_nodes[i];
-    //     std::cout << node.distance << "\t";
-    // }
-    // std::cout << std::endl;
 
     bool no_removed = best_L_nodes.is_full();
     // best_L_nodes.reserve(Lsize * 1.1);
@@ -3193,32 +3097,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
 
     _pq_data_store->preprocess_query(aligned_query, scratch);
 
-    // if (_expanded_nodes.size() > 0 || id_scratch.size() > 0)
-    // {
-    //     throw ANNException("ERROR: Clear scratch space before passing.", -1, __FUNCSIG__, __FILE__, __LINE__);
-    // }
-
-    // Decide whether to use bitset or robin set to mark visited nodes
-    // auto total_num_points = _max_points + _num_frozen_pts;
-    // bool fast_iterate = total_num_points <= MAX_POINTS_FOR_USING_BITSET;
-
-    // if (fast_iterate)
-    // {
-    //     if (inserted_into_pool_bs.size() < total_num_points)
-    //     {
-    //         // hopefully using 2X will reduce the number of allocations.
-    //         auto resize_size =
-    //             2 * total_num_points > MAX_POINTS_FOR_USING_BITSET ? MAX_POINTS_FOR_USING_BITSET : 2 * total_num_points;
-    //         inserted_into_pool_bs.resize(resize_size);
-    //     }
-    // }
-
-    // // Lambda to determine if a node has been visited
-    // auto is_not_visited = [this, fast_iterate, &inserted_into_pool_bs, &inserted_into_pool_rs](const uint32_t id) {
-    //     return fast_iterate ? inserted_into_pool_bs[id] == 0
-    //                         : inserted_into_pool_rs.find(id) == inserted_into_pool_rs.end();
-    // };
-
     // Lambda to batch compute query<-> node distances in PQ space
     auto compute_dists = [this, scratch, pq_dists](const std::vector<uint32_t> &ids, std::vector<float> &dists_out) {
         _pq_data_store->get_distance(scratch->aligned_query(), ids, dists_out, scratch);
@@ -3242,17 +3120,7 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
                 continue;
         }
 
-        // if (is_not_visited(id))
         {
-            // if (fast_iterate)
-            // {
-            //     inserted_into_pool_bs[id] = 1;
-            // }
-            // else
-            // {
-            //     inserted_into_pool_rs.insert(id);
-            // }
-
             float distance;
             uint32_t ids[] = {id};
             float distances[] = {std::numeric_limits<float>::max()};
@@ -3285,21 +3153,11 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
         auto n = nbr.id;
 
         itr++;
-        // std::cout << n <<"\t";
         int inserted = 0;
 
         ExpandedNode exp_n;
         bool found = false;
-// #if defined(__AVX2__)
-//         const ExpandedNode *exp_it = find_expanded_simd(trace.expanded.data(),
-//                                                          trace.expanded.data() + trace.expanded.size(), n);
-//         if (exp_it != trace.expanded.data() + trace.expanded.size())
-//         {
-//             found = true;
-//             exp_n = *exp_it;
-//             found_index = static_cast<uint>(exp_it - trace.expanded.data());
-//         }
-// #else
+
         for (size_t i = 0; i < trace.expanded.size(); ++i)
         {
             const auto &en = trace.expanded[i];
@@ -3330,68 +3188,23 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
                         continue;
                 }
 
-                // if (is_not_visited(id))
                 {
-                    visit_cnt++;
-                    // auto it = std::lower_bound(
-                    //     trace.visited.begin(), trace.visited.end(), id,
-                    //     [](const VisitedNode& node, uint32_t id) {
-                    //         return node.id < id; 
-                    //     }
-                    // );
-                    // if (fast_iterate)
-                    // {
-                    //     inserted_into_pool_bs[id] = 1;
-                    // }
-                    // else
-                    // {
-                    //     inserted_into_pool_rs.insert(id);
-                    // }
                     bool found_nbr = false;
                     if(found)
                     {
-// #if defined(DISKANN_ENABLE_SIMD_TRACE_LOOKUP) && defined(__AVX2__)
                         auto it = lower_bound_visited_simd(trace.visited.data() + exp_n.child_start,
                                                           trace.visited.data() + exp_n.child_end, id);
-// #else
-                        // auto it = std::lower_bound(
-                        //     trace.visited.begin() + exp_n.child_start, trace.visited.begin() + exp_n.child_end, id,
-                        //     [](const VisitedNode &node, uint32_t id) { return node.id < id; });
-// #endif
                         if (it != trace.visited.data() + exp_n.child_end && it->id == id)
                         {
-                            // if (fast_iterate)
-                            // {
-                            //     inserted_into_pool_bs[id] = 1;
-                            // }
-                            // else
-                            // {
-                            //     inserted_into_pool_rs.insert(id);
-                            // }
                             Neighbor nn = Neighbor(id, it->distance);
                             trace.best_L_nodes.insert(nn);
                             found_nbr = true;
-                            hit++;
                         }
                     }
 
-                    // if (it != trace.visited.end() && it->id == id) 
-                    // {
-                    //     if (fast_iterate)
-                    //     {
-                    //         inserted_into_pool_bs[id] = 1;
-                    //     }
-                    //     else
-                    //     {
-                    //         inserted_into_pool_rs.insert(id);
-                    //     }
-                    //     Neighbor nn = Neighbor(id, it->distance);
-                    //     trace.best_L_nodes.insert(nn);
-                    // }
-                    // else
                     if(!found_nbr)
                     {
-                        // _pq_data_store->prefetch_vector(id);
+                        _pq_data_store->prefetch_vector(id);
                         id_scratch.push_back(id);
                         
                     }
@@ -3404,41 +3217,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
             throw ANNException(err, -1, __FUNCSIG__, __FILE__, __LINE__);
         }
 
-        // if(id_scratch.size() > 4 || !trace.best_L_nodes.has_unexpanded_node())
-        // {
-        //     for (auto id : id_scratch)
-        //     {
-        //         // std::cout << id << " ";
-        //         if (fast_iterate)
-        //         {
-        //             inserted_into_pool_bs[id] = 1;
-        //         }
-        //         else
-        //         {
-        //             inserted_into_pool_rs.insert(id);
-        //         }
-        //     }
-
-        //     assert(dist_scratch.capacity() >= id_scratch.size());
-        //     compute_dists(id_scratch, dist_scratch);
-        //     cmps += (uint32_t)id_scratch.size();
-
-        //     // Insert <id, dist> pairs into the pool of candidates
-        //     for (size_t m = 0; m < id_scratch.size(); ++m)
-        //     {
-        //         trace.best_L_nodes.insert(Neighbor(id_scratch[m], dist_scratch[m]));
-        //     }
-        //     if(id_scratch.size() > 16)
-        //     {
-        //         dynamic_stride = 1;
-        //     }
-        //     else
-        //     {
-        //         dynamic_stride = 0;
-        //     }
-        //     id_scratch.clear();
-        //     dist_scratch.clear();
-        // }
         assert(dist_scratch.capacity() >= id_scratch.size());
         compute_dists(id_scratch, dist_scratch);
         cmps += (uint32_t)id_scratch.size();
@@ -3530,34 +3308,8 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
         }
         id_scratch.clear();
         dist_scratch.clear();
-        // std::cout << inserted << "\t";
     }
     
-    // if(id_scratch.size() > 0)
-    // {
-    //     for (auto id : id_scratch)
-    //     {
-    //         // std::cout << id << " ";
-    //         if (fast_iterate)
-    //         {
-    //             inserted_into_pool_bs[id] = 1;
-    //         }
-    //         else
-    //         {
-    //             inserted_into_pool_rs.insert(id);
-    //         }
-    //     }
-
-    //     assert(dist_scratch.capacity() >= id_scratch.size());
-    //     compute_dists(id_scratch, dist_scratch);
-    //     cmps += (uint32_t)id_scratch.size();
-
-    //     // Insert <id, dist> pairs into the pool of candidates
-    //     for (size_t m = 0; m < id_scratch.size(); ++m)
-    //     {
-    //         trace.best_L_nodes.insert(Neighbor(id_scratch[m], dist_scratch[m]));
-    //     }
-    // }
 
     {
         for (uint i = 0; i < trace.expanded.size(); i++)
@@ -3588,10 +3340,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
         trace.expanded = std::move(new_expanded);
         trace.visited = std::move(new_visited);
     }
-   
-
-    std::cout << visit_cnt << "/" << hit <<"\t";
-    // std::cout << itr << "\t";
     return std::make_pair(hops, cmps);
 }
 
@@ -3617,32 +3365,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
 
     _pq_data_store->preprocess_query(aligned_query, scratch);
 
-    // if (_expanded_nodes.size() > 0 || id_scratch.size() > 0)
-    // {
-    //     throw ANNException("ERROR: Clear scratch space before passing.", -1, __FUNCSIG__, __FILE__, __LINE__);
-    // }
-
-    // Decide whether to use bitset or robin set to mark visited nodes
-    // auto total_num_points = _max_points + _num_frozen_pts;
-    // bool fast_iterate = total_num_points <= MAX_POINTS_FOR_USING_BITSET;
-
-    // if (fast_iterate)
-    // {
-    //     if (inserted_into_pool_bs.size() < total_num_points)
-    //     {
-    //         // hopefully using 2X will reduce the number of allocations.
-    //         auto resize_size =
-    //             2 * total_num_points > MAX_POINTS_FOR_USING_BITSET ? MAX_POINTS_FOR_USING_BITSET : 2 * total_num_points;
-    //         inserted_into_pool_bs.resize(resize_size);
-    //     }
-    // }
-
-    // // Lambda to determine if a node has been visited
-    // auto is_not_visited = [this, fast_iterate, &inserted_into_pool_bs, &inserted_into_pool_rs](const uint32_t id) {
-    //     return fast_iterate ? inserted_into_pool_bs[id] == 0
-    //                         : inserted_into_pool_rs.find(id) == inserted_into_pool_rs.end();
-    // };
-
     // Lambda to batch compute query<-> node distances in PQ space
     auto compute_dists = [this, scratch, pq_dists](const std::vector<uint32_t> &ids, std::vector<float> &dists_out) {
         _pq_data_store->get_distance(scratch->aligned_query(), ids, dists_out, scratch);
@@ -3654,49 +3376,13 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
     // if (trace.best_L_nodes.size() > 0)
     //     _mm_prefetch(reinterpret_cast<const char *>(&trace.best_L_nodes[0]), _MM_HINT_T0);
 
-    // ── Prefetch trace containers ──────────────────────────────────
-    // Select variant via compile-time define:
-    //   PREFETCH_TRACE_V0  – current: single cache line per container
-    //   PREFETCH_TRACE_V1  – prefetch all of expanded (≈1.6 KB)
-    //   PREFETCH_TRACE_V2  – V1 + prefetch visited sub-ranges per expanded entry
-    //   (none)             – V0
-    // V1/V2: prefetch entire expanded vector.
-    // expanded ≈ 200 entries × 8 B = 1.6 KB → ~25 cache lines.
-
-    // const char *p = reinterpret_cast<const char *>(trace.expanded.data());
-    // const char *end = p + trace.expanded.size() * sizeof(ExpandedNode);
-    // for (; p < end; p += 64)
-    //     _mm_prefetch(p, _MM_HINT_T0);
-
-    // _mm_prefetch(reinterpret_cast<const char *>(trace.expanded.data()), _MM_HINT_T0);
-    // _mm_prefetch(reinterpret_cast<const char *>(trace.visited.data()), _MM_HINT_T0);
-
     int K = Lsize;
-    // bool print = false;
-    // TagT tag;
-    
-    // if(print)
-    //     std::cout << "init: ";
-    // if (trace.best_L_nodes.size() > K)
+
     {
-        // const auto keep_k = static_cast<size_t>(K);
-        // diskann::NeighborPriorityQueue trimmed(trace.best_L_nodes.capacity());
         for (size_t i = 0; i < K / 2; ++i)
         {
-
             trace.best_L_nodes.set_unexpanded(i);
-            // trimmed.insert(trace.best_L_nodes[i]);
-            // auto id = trace.best_L_nodes[i].id;
-            // if (fast_iterate)
-            // {
-            //     inserted_into_pool_bs[id] = 1;
-            // }
-            // else
-            // {
-            //     inserted_into_pool_rs.insert(id);
-            // }
         }
-        // trace.best_L_nodes = std::move(trimmed);
         trace.best_L_nodes.reset(K);
     }
     
@@ -3731,9 +3417,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
         auto n = nbr.id;
         itr++;
         int inserted = 0;
-        // std::cout << nbr.distance << "\t";
-        // if(print)
-        //     std::cout << "Iteration " << itr << ": expanding node " << n << std::endl;
 
         ExpandedNode exp_n;
         bool found = false;
@@ -3752,28 +3435,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
         //     // _mm_prefetch(reinterpret_cast<const char *>(&trace.visited[exp_n.child_start] + 64), _MM_HINT_T0);
 
 
-        //     // Predict the next-next node and prefetch its children immediately,
-        //     // before the neighbor-expansion loop below. There is no scan here to
-        //     // hide behind, but the neighbor loop (SIMD lookups + PQ distance
-        //     // computation over ~m neighbors) runs long enough to cover the latency.
-        //     next_n = 0;
-        //     next_index = 0;
-        //     if (trace.best_L_nodes.has_unexpanded_node())
-        //     {
-        //         next_n = trace.best_L_nodes.closest_unexpanded_prefetch().id;
-        //         for (uint i = 0; i < trace.expanded.size(); i++)
-        //         {
-        //             const ExpandedNode &en = trace.expanded[i];
-        //             if (en.id == next_n)
-        //             {
-        //                 found_next = true;
-        //                 next_index = i;
-        //                 break;
-        //             }
-        //         }
-        //     }
-        // }
-        // else
         {
             // Linear scan for the current node n. While scanning, also locate the
             // predicted next node (next_n) and prefetch its children, giving the
@@ -3850,7 +3511,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
                 // if (is_not_visited(id))
                 {
                     // bool found_nbr = false;
-                    visit_cnt++;
                     if(found)
                     {
                         auto it = lower_bound_visited_simd(trace.visited.data() + exp_n.child_start,
@@ -3859,15 +3519,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
 
                         if (it != trace.visited.data() + exp_n.child_end && it->id == id)
                         {
-                            // if (fast_iterate)
-                            // {
-                            //     inserted_into_pool_bs[id] = 1;
-                            // }
-                            // else
-                            // {
-                            //     inserted_into_pool_rs.insert(id);
-                            // }
-                            hit++;
                             Neighbor nn = Neighbor(id, it->distance);
                             trace.best_L_nodes.insert(nn);
                             uint found_idx = (int)(it - trace.visited.data());
@@ -3882,19 +3533,11 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
                             continue;
                         }
                     }
-                    // if(!found_nbr)
-                    // {
-                        // _pq_data_store->prefetch_vector(id);
+                    if(!found_nbr)
+                    {
+                        _pq_data_store->prefetch_vector(id);
                         id_scratch.push_back(id);
-                    // }
-                    // if (fast_iterate)
-                    // {
-                    //     inserted_into_pool_bs[id] = 1;
-                    // }
-                    // else
-                    // {
-                    //     inserted_into_pool_rs.insert(id);
-                    // }
+                    }
 
                 }
             }
@@ -3916,21 +3559,8 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
         //     }
         // std::cout << id_scratch.size() << "\t";
 
-        // if(id_scratch.size() > 32 || !trace.best_L_nodes.has_unexpanded_node())
-        if(id_scratch.size() > 0)
+        if(id_scratch.size() > 4 || !trace.best_L_nodes.has_unexpanded_node()) // speculative unrolling.
         {
-            // for (auto id : id_scratch)
-            // {
-            //     // std::cout << id << " ";
-            //     if (fast_iterate)
-            //     {
-            //         inserted_into_pool_bs[id] = 1;
-            //     }
-            //     else
-            //     {
-            //         inserted_into_pool_rs.insert(id);
-            //     }
-            // }
 
             auto s = std::chrono::high_resolution_clock::now();
 
@@ -4042,11 +3672,6 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
 
     }
 
-    // std::chrono::duration<double> diff1 = std::chrono::high_resolution_clock::now() - s;
-    // s = std::chrono::high_resolution_clock::now();
-
-    // std::cout << itr << "/" << comp_cnt << "\t";
-    // std::cout << visit_cnt << "\t";
     // Compact both expanded and visited by rebuilding: keep only visited
     // expanded nodes and their valid children, with corrected child_start/child_end.
     {
@@ -4072,20 +3697,8 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point_rep
 
         trace.expanded = std::move(new_expanded);
         trace.visited = std::move(new_visited);
-        // expanded_visited.assign(trace.expanded.size(), true);
-
-        // Sort expanded by id for binary search in subsequent calls
-        // std::sort(trace.expanded.begin(), trace.expanded.end(),
-        //           [](const ExpandedNode &lhs, const ExpandedNode &rhs) { return lhs.id < rhs.id; });
     }
-    // std::cout << inserted_into_pool_rs.bucket_count() << "\t" << trace.expanded.size() << "\t" << trace.visited.size() << std::endl;
-    // std::chrono::duration<double> diff2 = std::chrono::high_resolution_clock::now() - s;
-    // std::cout << diff1.count() * 1000.0 << ", " << diff2.count() * 1000.0 << std::endl;
-    // std::cout << comp_time.count() * 1000.0 << "\t";
 
-    // std::cout << itr << "\t";
-    std::cout << visit_cnt << "/" << hit<< "\t";
-    // std::cout << predict_correct << "/" << itr << "\t";
     return std::make_pair(hops, cmps);
 }
 
